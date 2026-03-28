@@ -1,0 +1,621 @@
+---
+title: "Assignment1"
+author: "Sinping CHAN"
+format: 
+  html:
+    code-fold: false  
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
+  message: false
+  warning: false
+---
+
+```         
+```
+
+## **1. ML concepts**
+
+### 1a)
+
+```{r}
+library(here)
+library(readr)
+library(tidyverse)
+library(conflicted)
+conflicts_prefer(dplyr::select)
+conflicts_prefer(dplyr::filter)
+
+pred_data <- read_csv(here("assign1_pred_data.csv"))
+pred_data |> slice_head(n=3)
+
+head(pred_data)
+```
+
+```{r}
+# 1. Identify the probability columns (all numeric columns)
+# In your case, these are likely 'adelie', 'chinstrap', and 'gentoo'
+prob_cols <- colnames(pred_data)[sapply(pred_data, is.numeric)]
+
+# 2. Determine the predicted label and format it to match the 'true' column
+pred_data_final <- pred_data %>%
+  mutate(
+    # Find the name of the column with the maximum probability
+    predicted = prob_cols[max.col(select(., all_of(prob_cols)), ties.method = "first")],
+    # Convert predicted labels to Title Case to match the 'true' column (e.g., "adelie" -> "Adelie")
+    predicted = str_to_title(predicted),
+    true = str_to_title(true)
+  )
+
+# 3. Compute the confusion table
+confusion_table <- table(True = pred_data_final$true, Predicted = pred_data_final$predicted)
+
+# Display the table
+print(confusion_table)
+```
+
+**Output summary:**
+
+-Sensitivity (Recall / Hit rate / True Positive Rate) = 50 / (50 + 0) = 50/50 = 1.00 (or 100%)\
+-Specificity (True Negative Rate) = 4 / (1 + 4) = 4/5 = 0.80 (or 80%)\
+-Prevalence = 50 / 55 ≈ 0.909 (or 90.9%)\
+-Accuracy = (50 + 4) / 55 = 54/55 ≈ 0.982 (or 98.2%)\
+-Balanced Accuracy = (1.00 + 0.80) / 2 = 0.90 (or 90%)
+
+Overall the classifier performs very well, with just a single error (1 Chinstrap penguin is incorrectly labelled as Adelie) in 55 observations.
+
+It demonstrates a very impressive performance with Adelie penguins; all 50 were correctly classified (100% recall). But their Chinstrap penguins performed less strongly; only 4 out of 5 could be correctly identified (80% recall). Overall accuracy (98.2%) is high while balanced accuracy (90%), shows performance isn't quite as strong when both classes receive equal weight(90%). Overall the model excels at classifying Adelie while having some inaccuracies when distinguishing Chinstrap. The model is excellent at identifying the majority class (Adelie), while having small error rates on minority classes (Chinstrap).
+
+### 1b)
+
+Accuracy if all observations were classified as Adelie (Prevalence):\
+All 55 penguins would be labelled Adelie. This gives 50 correct Adelie predictions and 5 incorrect Chinstrap predictions. Accuracy = 50 / 55 ≈ 0.909 (or 90.9%)
+
+The model’s accuracy (98.2%) is better than the 90.9% accuracy achieved by classifying all observation as Adelie.
+
+In this imbalanced dataset, a high accuracy score can be deceptive because it mostly reflects the high frequency of the majority class rather than the model's actual power to tell the species apart. However, the 7.3% improvement shows that the model isn't just following the majority. It has actually learned to identify the differences between the two species, providing a clear improvement over just guessing the most common class.
+
+### 1c)
+
+Because the model performs perfectly on the majority class (100%), the overall accuracy looks excellent. However, balanced accuracy gives equal weight to both classes. It penalises the model for the 20% error rate on the minority class (Chinstrap), causing the balanced accuracy to drop to 90%.
+
+Balanced accuracy is the better measure here to reflect the true ability of the model to classify this data. It provides an objective assessment of the model’s performance across both classes, ensuring that the classification ability for the minority group is accurately represented and not obscured by the high prevalence of the majority class.
+
+### --------------------------------------------------------
+
+## 2. **K-nearest neighbours**
+
+```{r}
+
+# Load necessary libraries
+library(MASS)      # For the biopsy dataset and LDA
+library(tidyverse) # For data manipulation (dplyr, purrr, etc.)
+library(tidyr)     # For drop_na
+
+# 1. DATA PRE-PROCESSING
+# Load the data
+data(biopsy)
+
+# Clean the data
+biopsy_clean <- as.data.frame(biopsy) |> 
+  dplyr::select(-ID) |>                       # Remove ID as it's not a predictor
+  drop_na() |>                         # Remove rows with missing values
+  # Standardize all columns EXCEPT the 'class' column
+  # Scale makes mean = 0 and SD = 1 for better model performance
+  mutate(across(!class, ~ as.numeric(scale(.x)))) |> 
+  mutate(class = factor(class))        # Ensure target is a Factor
+
+# Find the number of classes (Target: Benign vs. Malignant)
+num_classes <- nlevels(biopsy_clean$class)
+class_names <- levels(biopsy_clean$class)
+class_counts <- table(biopsy_clean$class)
+
+print(paste("Number of classes:", num_classes))
+print("Class labels and counts:")
+print(class_counts)
+```
+
+### 2a)
+
+The dataset comprises 2 primary classes, benign and malignant. Of all observations, approximately 65.0% (444 cases) can be classified as benign while 35.0% (239 cases) represent malignancy. This distribution indicates that the data is significantly imbalanced, with nearly twice as many benign observations as malignant ones.
+
+### 2b)
+
+```{r}
+library(rsample)
+
+# 1. Load and Clean Data FIRST
+data(biopsy)
+biopsy_clean <- as.data.frame(biopsy) |>
+  dplyr::select(-ID) |>
+  drop_na() |>
+  mutate(across(!class, ~ as.numeric(scale(.x)))) |>
+  mutate(class = factor(class, levels = c("benign", "malignant")))
+
+# 2. Set Seed and Split the Cleaned Data
+set.seed(7788)
+
+# 70/30 Split stratified by the response 'class'
+biopsy_split <- initial_split(biopsy_clean, prop = 0.7, strata = class)
+
+# 3. Extract Sets
+train_data <- training(biopsy_split)
+test_data  <- testing(biopsy_split)
+
+# 4. Verify Results (Matching your expected output)
+cat("Training rows:", nrow(train_data), "\n") 
+cat("Testing rows: ", nrow(test_data), "\n\n")  
+
+print("Training Proportions:")
+round(prop.table(table(train_data$class)), 3)
+
+print("Testing Proportions:")
+round(prop.table(table(test_data$class)), 3)
+```
+
+The dataset contains 683 observations, and it was divided into 70% (n=477) training and 30% (n= 206) testing. This split ratio was appropriate for a dataset of this size, as it provided enough data to learn patterns and retained a substantial amount for evaluation.
+
+In order to address the imbalance in class, stratified sampling has been applied to class variables. It ensures the original distribution of benign and malignant case across both subsets. This stratification's effectiveness is shown by the output which shows consistent proportions for benign tumors in both the training set (65.0%) and the testing set (65.0%). This consistency allows models to be trained without being influenced by data that is significantly different from the target distributions.
+
+### 2c)
+
+```{r}
+#| label: fit-knn-models
+#| echo: true
+
+library(tidymodels)
+library(kknn)
+
+# 1. Define the kNN specifications for K=5 and K=15
+# --- Model 1: K = 5 ---
+K1 <- 5
+knn_spec_5 <- nearest_neighbor(neighbors = K1, 
+                               weight_func = "rectangular", 
+                               dist_power = 2) |> 
+  set_mode("classification") |> 
+  set_engine("kknn")
+
+knn_fit_5 <- knn_spec_5 |> 
+  fit(class ~ ., data = train_data)
+
+# --- Model 2: K = 15 ---
+K2 <- 15
+knn_spec_15 <- nearest_neighbor(neighbors = K2, 
+                                weight_func = "rectangular", 
+                                dist_power = 2) |> 
+  set_mode("classification") |> 
+  set_engine("kknn")
+
+# Fit using your train_data
+knn_fit_15 <- knn_spec_15 |> 
+  fit(class ~ ., data = train_data)
+
+# --- Adding probabilistic predictions to test_data ---
+# We use type = "prob" to get probabilities for both classes
+# Then we select only the column for 'malignant'
+test_data <- test_data |> 
+  mutate(
+    prob_knn5  = predict(knn_fit_5, new_data = test_data, type = "prob") |> 
+                 pull(.pred_malignant),
+    prob_knn15 = predict(knn_fit_15, new_data = test_data, type = "prob") |> 
+                 pull(.pred_malignant)
+  )
+
+# Verify the new columns exist
+test_data |> 
+  dplyr::select(class, prob_knn5, prob_knn15) |> 
+  slice_head(n = 5)
+```
+
+Initially, two distinct model specifications were defined using the nearest_neighbor function from the tidymodels framework, with K values set to 5 and 15 respectively. A rectangular weight function was used for both models to ensure that all K neighbors contribute equally to the classification process.The kknn engine was then used to fit both models to the training data.
+
+Finally, the predict() function was applied with the type = "prob" argument to extract the class-specific probability values for the test set. These probabilities were appended to the testing dataframe as new variables, prob_knn5 and prob_knn15, to facilitate a detailed performance comparison between the two models.
+
+### 2d)
+
+```{r}
+library(tidymodels)
+
+# 1. Create the classification labels based on the 0.5 threshold
+# (Maximum Predictive Probability Rule)
+test_data <- test_data |> 
+  mutate(
+    label_knn5  = if_else(prob_knn5 >= 0.5, "malignant", "benign") |> 
+                  factor(levels = c("benign", "malignant")),
+    label_knn15 = if_else(prob_knn15 >= 0.5, "malignant", "benign") |> 
+                  factor(levels = c("benign", "malignant"))
+  )
+
+# 2. Compute Confusion Tables
+conf_knn5  <- test_data |> conf_mat(truth = class, estimate = label_knn5)
+conf_knn15 <- test_data |> conf_mat(truth = class, estimate = label_knn15)
+
+print("Confusion Table for K=5:")
+print(conf_knn5)
+print("Confusion Table for K=15:")
+print(conf_knn15)
+
+# 3. Compute ROC-AUC for each K
+# Note: we pass the actual probability column to roc_auc
+auc_knn5  <- test_data |> roc_auc(truth = class, prob_knn5, event_level = "second")
+auc_knn15 <- test_data |> roc_auc(truth = class, prob_knn15, event_level = "second")
+
+cat("\nROC-AUC for K=5: ", sprintf("%.4f", auc_knn5$.estimate))
+cat("\nROC-AUC for K=15:", sprintf("%.4f", auc_knn15$.estimate))
+
+# 4. Plot ROC Curves
+# We create a long format data for plotting both curves together
+roc_curve_data <- bind_rows(
+  test_data |> roc_curve(truth = class, prob_knn5, event_level = "second") |> mutate(model = "K = 5"),
+  test_data |> roc_curve(truth = class, prob_knn15, event_level = "second") |> mutate(model = "K = 15")
+)
+
+ggplot(roc_curve_data, aes(x = 1 - specificity, y = sensitivity, color = model)) +
+  geom_path(linewidth = 0.8) +
+  geom_abline(lty = 3) + # Diagonal line (random guessing)
+  coord_equal() +
+  theme_minimal() +
+  labs(title = "ROC Curves for kNN Models",
+       subtitle = "Comparing K=5 and K=15 on Biopsy Test Data",
+       x = "False Positive Rate (1 - Specificity)",
+       y = "True Positive Rate (Sensitivity)")
+
+
+```
+
+At a standard decision threshold of 0.5, both the K=5 and K=15 models produced identical confusion matrices. Both models were highly accurate in identifying 130 benign and 70 malignant cases, but they also shared the same 6 misclassifications.
+
+However, ROC-AUC scores reveal a significant difference in performance. K=15 (0.9969) outperforms K=5 (0.9934), showing that while their hard classifications are identical at 0.5, their underlying probabilistic confidence levels differ. The higher AUC of K=15 indicates it has a better ability to discriminate between the 2 classes at all possible decision thresholds, offering superior predictive power.
+
+Furthermore, K=15 provides a smoother decision boundary. This reduces the risk of data being overfitted to local noise within the medical data. K=15 is therefore represents a more robust and reliable option for clinical diagnosis, where stability and generalized performance are essential.
+
+### --------------------------------------------------------
+
+## **3. Visualisation**
+
+```{r}
+# ============================================================
+# Exploring mulgar::c7  — Scatterplot Matrix + Tour + UMAP
+# ============================================================
+
+# --- 0. Install / load packages -----------------------------------------
+library(mulgar)
+library(GGally)
+library(uwot)
+library(ggplot2)
+library(dplyr)
+library(patchwork)
+
+# ============================================================
+# 1. First look at the data
+# ============================================================
+data(c7, package = "mulgar")
+
+cat("Dimensions:", nrow(c7), "rows x", ncol(c7), "cols\n")
+cat("Variables :", names(c7), "\n\n")
+glimpse(c7)
+summary(c7)
+
+```
+
+```{r}
+# ============================================================
+# Exploring mulgar::c7 — Scatterplot Matrix + Clustering
+# ============================================================
+
+# --- 0. Load packages -----------------------------------------
+library(mulgar)
+library(GGally)
+library(ggplot2)
+library(dplyr)
+
+# --- 1. Load the data -----------------------------------------
+data(c7, package = "mulgar")
+
+# --- 2. Perform Clustering (To create the colors) -------------
+# Since you identified 6 clusters in UMAP/Tour, we use K=6
+set.seed(123) # Ensures you get the same colors every time you run it
+km_result <- kmeans(c7, centers = 6, nstart = 25)
+
+# Add the cluster results back into the dataframe as a factor
+c7_with_clusters <- c7 %>%
+  mutate(cluster = as.factor(km_result$cluster))
+
+# --- 3. Generate the Colored Scatterplot Matrix (SPLOM) -------
+# This uses the 'cluster' column we just created for the colors
+p_splom_colored <- ggpairs(
+    c7_with_clusters,
+    columns = 1:6, # Use the first 6 numeric variables (x1-x6)
+    aes(colour = cluster, alpha = 0.5),
+    upper = list(continuous = wrap("cor", size = 2.5)),
+    lower = list(continuous = wrap("points", size = 0.4)),
+    diag  = list(continuous = wrap("densityDiag", alpha = 0.5))
+) +
+  theme_bw(base_size = 9) +
+  theme(
+    panel.grid.major = element_blank(),
+    strip.background = element_rect(fill = "white")
+  ) +
+  labs(
+    title = "Colored Scatterplot Matrix — mulgar::c7",
+    subtitle = "Color-coded by 6 K-means Clusters",
+    x = "Variables x1-x6",
+    y = "Variables x1-x6"
+  )
+
+# --- 4. Output ------------------------------------------------
+# Print to screen
+print(p_splom_colored)
+
+# Save to file for your report
+ggsave("c7_splom_colored.png", p_splom_colored, width = 20, height = 20, dpi = 200)
+
+```
+
+```{r}
+library(mulgar)
+library(tourr)
+library(mclust)
+
+data(c7)  # 6 vars, numeric only
+
+# Run clustering (try G=2:8 clusters, pick best BIC)
+mc <- Mclust(c7, G = 2:8)
+summary(mc)   # shows suggested number of clusters
+
+# Get cluster labels (factor for coloring)
+cl <- factor(mc$classification)   # or use mc$z for soft probs if you want
+
+# Optional: better colors (distinct palette)
+library(colorspace)
+my_cols <- qualitative_hcl(length(levels(cl)), palette = "Dark 3")[as.integer(cl)]
+```
+
+```{r}
+render_gif(
+  c7,
+  grand_tour(),
+  display = display_xy(
+    col = my_cols,               # <-- your colors here!
+    cex = 0.6,                   # small dots as before
+    axes = "bottomleft",         # PCs / variable circle in bottom-left
+    center = TRUE,
+    pch = 16                     # solid circles for cleaner look
+  ),
+  rescale = TRUE,
+  gif_file = "c7_colored_tour.gif",
+  apf = 1/30,
+  frames = 500,                # start with 500, increase if needed
+  width = 500, height = 500
+)
+```
+
+```{r}
+# ============================================================
+# 4. UMAP  (non-linear manifold layout)
+#    – preserves local neighbourhood structure; reveals clusters
+#      and manifold geometry that linear projections miss
+# ============================================================
+library(uwot)
+umap_c7 <- umap(c7)
+df_umap <- data.frame(UMAP1 = umap_c7[,1], UMAP2 = umap_c7[,2], cluster = cl)
+
+ggplot(df_umap, aes(UMAP1, UMAP2, color = cluster)) +
+  geom_point(size = 1.2, alpha = 0.8) +
+  scale_color_manual(values = qualitative_hcl(length(levels(cl)))) +
+  theme_minimal() +
+  labs(title = "UMAP of c7 colored by clustering")
+```
+
+![](c7_colored_tour.gif)
+
+Tour snapshots:
+
+![](IMAGES/1.png)
+
+![](IMAGES/2.png)
+
+![](IMAGES/螢幕擷取畫面%202026-03-21%20164413.png)
+
+### Number and shape of clusters :
+
+The c7 data visualisation reveals an environment that is highly structured. The data points in the SPLOM (x1 and x2) shows a clear, curved shape, and a seperated group (pink) in a compact and high-density circle located slightly outside of the main curved structure.
+
+The consistent separation of this group across UMAP as well as Tour Projections indicates that it has different mathematical properties than the other groups.
+
+The 5 clusters (Clusters 1-5) form the main curve . While the majority of clusters are separated fairly well, only Group 1 (Pink) and Cluster 5 (Blue) show a noticeable overlap in several Tour snapshots. This indicates that they were the least clearly separated pair in the high-dimensional original space.
+
+This distinction is more obvious in the UMAP projection where the data are organized into a continuous "J" shape. UMAP maintains the 6 clusters as distinct despite some overlaps. This provides strong evidence that there are 6 clusters in the dataset.
+
+### Dimensionality/Linear Relationships:
+
+The c7 dataset consists of 6 standardized variables (x1 - x6), with all means approximately zero. A SPLOM analysis reveals that strong linear dependencies are generally absent across the variables, with most pairwise correlations being extremely low (\$\|r\| \\le 0.055\$). The only notable exception is the moderate correlation between x1 and x2 (\$r = 0.452\$). While this lack of linear correlation might suggest the data spans the full 6D space, further visualization reveals a much lower intrinsic dimensionality.The non-linear structures identified in the UMAP 'hook' shape and the Grand Tour's curved arm suggest that the clusters actually lie on a lower-dimensional manifold, likely consisting of only 2 to 3 dimensions. Specifically, the bimodal distributions of \$x_1\$ and \$x_2\$ (seen in the SPLOM diagonals) act as the primary drivers for the dataset's structure. This explains the clear separation of the compact, spherical cluster (Cluster 6) from the rest of the curved assembly. Consequently, although the data is recorded in six dimensions, its meaningful structural variation is concentrated within a much smaller, non-linear subspace.
+
+### Outliers:
+
+There are no significant outliers detected. No obvious isolated points far from the main structures in UMAP ,tour projection nor SPLOM There are few stray dots in the tour snapshots are projection artefacts, not true outliers.
+
+### --------------------------------------------------------
+
+## 4. **Dimension reduction**
+
+```{r}
+library(tidyverse)
+library(factoextra)
+library(mulgar)
+library(ggfortify)
+
+# 1. Load the Data
+aus_t20 <- read_csv("ausmt20.csv")
+aus_t20 |> slice_head(n=3)
+
+# Check variable types
+cat("\nColumn classes:\n")
+sapply(aus_t20, class)
+
+# Check missing values per column
+cat("\nMissing values per column:\n")
+colSums(is.na(aus_t20))
+
+aus_numeric <- aus_t20 |>
+  mutate(HighScoreNotOut = as.numeric(HighScoreNotOut)) |>
+  select(where(is.numeric)) |>
+  dplyr::select(-any_of(c("Start", "End", "X", "id", "index")))
+
+# Standardise manually (z-score) before passing to prcomp
+cricket_pca <- prcomp(aus_numeric, center = TRUE, scale. = TRUE)
+
+```
+
+### Examine the data and identify which variables should be included in the PCA analysis
+
+Initial data inspection of ausmt20.csv confirmed that the dataset contains no missing values across all 28 variables, providing a complete matrix for analysis.
+
+To ensure a meaningful PCA, the following selection and pre-processing steps were taken: Variable Transformation: The variable HighScoreNotOut was converted from logical to numeric to allow for mathematical processing.
+
+Feature Selection: Variables were chosen to distinguish between player roles (Batters, Bowlers, and All-rounders).Included: Batting indicators (RunsScored, InningsBatted, HighScore, BattingAverage, BattingStrikeRate, Fours, Sixes) and Bowling indicators (Wickets, Overs, RunsConceeded, Economy, BowlingAverage, BowlingStrikeRate).
+
+Excluded: Start and End years (temporal noise), and Player/Country (categorical identifiers). Matches was excluded to avoid redundancy with InningsBatted/InningsBowled.Standardization: Data was standardized (z-score scaling) using scale = TRUE.
+
+### Apply and summarise the PCA
+
+```{r}
+# 2. PCA and Screeplot
+
+# mulgar::ggscree helps decide how many components (Dimensions) to keep
+mulgar::ggscree(cricket_pca, q = ncol(aus_numeric))
+
+options(digits = 2)
+summary(cricket_pca)
+```
+
+The PCA was applied to the standardized numeric subset. The summary of the components is as follows:
+
+PC1 (Dim1): Explains 39.3% to 40.5% of the total variance. It represents the "Career Volume," where high loadings from almost all participation metrics suggest it tracks overall experience and accumulation of stats.
+
+PC2 (Dim2): Explains 22.8% to 23.4% of the variance. It focuses on "Role Specialization," effectively separating bowling contributions from batting contributions.
+
+Total Explained Variance: The first two components combined explain approximately 63.9% of the total variance in the dataset. This high percentage indicates that the majority of the information is preserved even after reducing the data from 20+ variables down to just two dimensions.
+
+```{r}
+# 3. Create a Nice Summary Table (Loadings + Variance)
+evl <- cricket_pca$sdev^2
+p <- evl / sum(evl)
+cum_p <- cumsum(p)
+
+pca_stats <- rbind(p, cum_p)
+rownames(pca_stats) <- c("Proportion", "Cum. prop")
+colnames(pca_stats) <- colnames(cricket_pca$rotation)
+
+
+cricket_pca_smry <- as.data.frame(cricket_pca$rotation) |>
+  bind_rows(as.data.frame(pca_stats))
+
+
+# View the main components
+cricket_pca_smry[, 1:min(5, ncol(cricket_pca_smry))]
+```
+
+### Produce a Biplot, and explain structure and variable contributions
+
+```{r}
+#| fig-width: 10
+#| fig-height: 8
+
+library(plotly)
+# 4. Biplot of the first two PCs
+# Flip signs so PC1 and PC2 point in the "positive performance" direction
+cricket_pca$rotation <- -cricket_pca$rotation
+cricket_pca$x        <- -cricket_pca$x
+
+# Now re-run your biplot and interactive plot — signs will be flipped
+autoplot(cricket_pca,
+         data = aus_t20,
+         loadings = TRUE,
+         loadings.label = TRUE,
+         loadings.label.size = 3) +
+  theme_minimal() +
+  labs(title    = "Biplot: Australian T20 Player Performance",
+       subtitle = "Arrows show how stats (Runs, SR, Ave) contribute to PCs")
+
+pc_plot_data <- as.data.frame(cricket_pca$x) |>
+  mutate(Player = aus_t20$Player)
+
+p_cricket <- ggplot(pc_plot_data, aes(x = PC1, y = PC2, label = Player)) +
+  geom_point(aes(color = PC1)) +
+  theme_minimal() +
+  labs(title    = "PCA of Australian T20 Players",
+       subtitle = "Hover to see player names")
+
+ggplotly(p_cricket)
+
+
+```
+
+The Biplot shows a V-shaped pattern in the Australian T20 players data. This is mainly driven by their professional roles and corresponding statistical profiles. In this projection, there is a distinct vertical separation between bowling and batting specializations on the PC2 axis. The top-right quadrant of the PC2 axis is occupied by indicators that measure batting performance, such as RunsScored, Fours and Sixes. This effectively identifying the space occupied by specialist batters.Conversely, bowling-related variables such as Wickets, RunsConceded, and InningsBowled are all clustered in the bottom right quadrant of the graph (PositivePC1, NegativePC2), indicating the territory occupied by specialist bowlers.
+
+The length of the vectors indicates their relative importance. Longer arrows, most notably for Matches and InningsBatted, demonstrate a high contribution to the variance captured by the first two principal components. These prominent vectors serve as primary anchors in player classification. They show that the most important differences are volume of play and overall involveme. The distinct separation of the batting and the bowling groups confirms the fact that these skill sets differ independently. This visually validates the role specialization in the Australian T20 team.
+
+### Determine and justify the number of PCs
+
+According to Kaiser Criterion (Eigenvalues \> 1) and the screen plot table, there are 5 PCs with a Standard Deviation \> 1 (PC1 to PC5). This suggests that these 5 components each explain more variance than a single original standardized variable.
+
+While the table identifies 5 PCs with a Standard Deviation \> 1, the Scree Plot shows a distinct "elbow" or leveling off after PC2 or PC3. The most significant drop in explained variance occurs between PC2 (22.8%) and PC3 (9.6%), after which the curve begins to flatten.
+
+PC1 and PC2 combined explain 62.6% of the total variance. PC1, PC2, and PC3 combined explain 73.0% of the total variance. Reaching PC5 would capture 83.28% of the variance.
+
+I have determined that retaining 3 PCs is the most appropriate balance for this analysis. Although the Kaiser Criterion suggests 5 PCs, the Scree Plot visually demonstrates that the first three components capture the vast majority of the "information" (73.0%) which is a statistically significant and robust summary of the Australian T20 squad.
+
+### Interpret the PCs, including notes about particular players
+
+```{r}
+# ============================================================
+# 5. PCA Loadings Table (Coefficients)
+# ============================================================
+
+# Extract the loadings (rotation)
+loadings_table <- as.data.frame(cricket_pca$rotation[, 1:3])
+
+# Rename columns for clarity in the report
+colnames(loadings_table) <- c("PC1 (Volume)", "PC2 (Role)", "PC3 (Quality)")
+
+# Round to 3 decimal places for professional presentation
+loadings_table_rounded <- round(loadings_table, 3)
+
+# Display the table (In Quarto/RMarkdown, this will look like a neat table)
+knitr::kable(loadings_table_rounded, 
+             caption = "Variable Loadings for the First Three Principal Components")
+
+# Optional: Find which variables are the "Top Contributors" for PC1
+cat("\nTop contributors for PC1 (Volume):\n")
+print(sort(abs(loadings_table[,1]), decreasing = TRUE)[1:5])
+```
+
+The Loadings Table reveals that PC1 is defined by career accumulation, with high absolute loadings in `InningsBatted` (0.33) and `RunsScored` (0.32). PC2 functions as a 'Role Axis', effectively separating bowling specialization (e.g., `Overs`, 0.38) from batting metrics. Notably, PC3 provides a measure of 'Bowling Quality', dominated by efficiency metrics like `BowlingAverage` (-0.56) and `Economy` (-0.47), allowing us to distinguish high-volume bowlers from high-impact ones.
+
+The PCA reveals 3 distinct dimensions of player performance, together explaining 73.0% of the total variance:
+
+**PC1: Career Volume / Experience (38.4%)**
+
+This axis is dominated by high absolute loadings in participation metrics: InningsBatted (0.33), RunsScored (0.32), and BallsFaced (0.32). This component represents the "statistical footprint" or career longevity of a player. AJ Finch (PC1: 12.22) and DA Warner (PC1: 12.03) are positioned at the extreme end of this axis. Their high scores statistically confirm their status as long-tenured veterans with massive cumulative
+
+**PC2: Player Specialization (24.2%)**
+
+PC2 functions as a "Specialization Axis," effectively creating a spectrum between batting and bowling roles. This axis shows strong positive loadings for bowling workload indicators—Overs (0.38), Wickets (0.38), and RunsConceded (0.38), it contrasted against negative loadings for batting metrics.
+
+A. Zampa has a significantly negative PC2 score of -12.439 (on his specific plot alignment), identifying him as a specialist whose contribution is purely bowling-focused. GJ Maxwell is a notable outlier on PC1 (14.72) but sits almost exactly on the center-line for PC2 (-0.074). This near-zero PC2 score statistically confirms his role as a versatile All-rounder with balanced contributions across both disciplines.
+
+**PC3: Bowling Efficiency / Quality (10.4%)**
+
+Unlike the volume-heavy PC1, PC3 shifts the focus to per-ball effectiveness. This component is characterized by high loadings in quality-based metrics: `BowlingAverage` (-0.56), `BowlingStrikeRate` (-0.54), and `Economy` (-0.47).
+
+It distinguishes between bowlers based on their per-ball or per-run effectiveness, separating those who are "economical" (low runs conceded) or "deadly" (frequent wickets) from those who take wickets at a higher statistical cost.
+
+### Suggest ways that this analysis could be improved
+
+First, the current analysis is heavily skewed by cumulative totals. Because variables such as RunsScored and Wickets are not normalized by the number of matches played, veteran players naturally dominate the primary components. This "volume bias" overshadows current skill and efficiency. To improve the model's accuracy, I suggest transforming cumulative data into rate-based metrics, such as Runs per Innings or Wickets per Over. This would shift the focus from career longevity to per-game impact.
+
+Second, including Player Age as a variable would provide critical context for performance trends. It would allow the model to determine if a high PC1 score (representing Volume) begins to correlate with a decline in PC3 (Efficiency). It allows us to monitor physical decline versus experience.
+
+Third, the data set contains a mix of retired players and players active as of 2026. A significant improvement would be to categorize players into 'Historical' and 'Modern' groups based on their End year. Performing a comparative PCA between these eras would filter out the 'noise' of retired players and focus on the specific competitive standards of the current T20 environment.
